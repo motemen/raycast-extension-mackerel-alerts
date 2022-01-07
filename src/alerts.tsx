@@ -3,10 +3,12 @@ import useSWR from "swr";
 import { formatDistance, fromUnixTime } from "date-fns";
 import axios from "axios";
 
+// https://mackerel.io/ja/api-docs/entry/organizations#get
 interface OrgResponse {
   name: string;
 }
 
+// https://mackerel.io/ja/api-docs/entry/alerts#get
 interface AlertResponse {
   alerts: AlertResponseItem[];
 }
@@ -25,39 +27,37 @@ interface AlertResponseItem {
 }
 
 export default function Command() {
-  const apiKey = preferences.apiKey.value as string | undefined;
-  const mackerel = axios.create({
-    baseURL: "https://api.mackerelio.com",
-    headers: {
-      "X-Api-Key": String(apiKey),
-    },
-  });
-  mackerel.interceptors.response.use(undefined, (error) => {
-    return Promise.reject(`${error.config.url}: ${error.response.data.error}`);
+  const apiKey = preferences.apiKey?.value as string | undefined;
+
+  const { data, error } = useSWR(apiKey, async (apiKey) => {
+    const mackerel = axios.create({
+      baseURL: "https://api.mackerelio.com",
+      headers: {
+        "X-Api-Key": apiKey,
+      },
+    });
+    mackerel.interceptors.response.use(undefined, (error) => {
+      return Promise.reject(`${error.config.url}: ${error.response.data.error}`);
+    });
+
+    const { data: orgResponse } = await mackerel.get<OrgResponse>("/api/v0/org");
+    const { data: alertsResponse } = await mackerel.get<AlertResponse>("/api/v0/alerts");
+
+    return {
+      orgName: orgResponse.name,
+      alerts: alertsResponse.alerts,
+    };
   });
 
-  const { data: orgName, error: orgError } = useSWR(apiKey, async () => {
-    const response = await mackerel.get<OrgResponse>("/api/v0/org");
-    return response.data.name;
-  });
-
-  const { data, error } = useSWR(orgName, async (orgName) => {
-    const response = await mackerel.get<AlertResponse>("/api/v0/alerts");
-    return response.data;
-  });
-
-  if (orgError) {
-    showToast(ToastStyle.Failure, orgError);
-  }
   if (error) {
     showToast(ToastStyle.Failure, error);
   }
 
-  const isLoading = !data && !error && !orgError;
-
   return (
-    <List isLoading={isLoading}>
-      {orgName && data?.alerts.map((alert) => <AlertListItem key={alert.id} orgName={orgName} alert={alert} />)}
+    <List isLoading={!data && !error}>
+      {data?.alerts.map((alert) => (
+        <AlertListItem key={alert.id} orgName={data.orgName} alert={alert} />
+      ))}
     </List>
   );
 }
@@ -73,14 +73,12 @@ const AlertListItem = ({ orgName, alert }: { orgName: string; alert: AlertRespon
     }
     icon={{
       source: Icon.Circle,
-      tintColor:
-        alert.status === "OK"
-          ? Color.Green
-          : alert.status === "CRITICAL"
-          ? Color.Red
-          : alert.status === "WARNING"
-          ? Color.Yellow
-          : Color.SecondaryText,
+      tintColor: {
+        OK: Color.Green,
+        CRITICAL: Color.Red,
+        WARNING: Color.Yellow,
+        UNKNOWN: Color.SecondaryText,
+      }[alert.status],
     }}
   ></List.Item>
 );
